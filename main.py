@@ -2,7 +2,7 @@ import math
 import numpy as np
 
 #        CORE CRYPTO LOGIC
-# ==========================================
+
 
 lam = 2
 
@@ -108,9 +108,8 @@ def adec(apk, tk, act):
     s_final = np.round(s * (p / q)).astype(int) % p
     return s_final
 
-# ==========================================
-#              SIMPLE USER INTERFACE
-# ==========================================
+#              USER INTERFACE
+
 
 def pad_message(msg, target_len):
     return msg + " " * (target_len - len(msg))
@@ -142,7 +141,7 @@ def run_program():
         mu_real = np.full((n, 1), val_real, dtype=int)
         
         ciphertext = aenc(apk, mu_fake, mu_real)
-        
+        print(ciphertext)
         # Dictator Decryption
         dec_vec_fake = dec(ask, ciphertext, p, q)
         dictator_output += chr(dec_vec_fake[0][0])
