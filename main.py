@@ -1,180 +1,160 @@
 import math
 import numpy as np
-import random
 
-# ----------------- Helper Functions -----------------
+#        CORE CRYPTO LOGIC
+# ==========================================
+
+lam = 2
+
+def sample_uniform_matrix(rows, cols, q):
+    return np.random.randint(0, q-1, size=(rows,cols), dtype=int)
+
+def sample_error_matrix(rows, cols, std_dev, q):
+    return np.round(np.random.normal(loc=0, scale=std_dev, size=(rows, cols))).astype(int)
 
 def gadget_matrix(n, k, q):
-    """Constructs the Gadget matrix G = I_n ⊗ [1, 2, 4, ..., 2^{k-1}]"""
     g = 2 ** np.arange(k)
     G = np.kron(np.eye(n, dtype=int), g) % q
     return G
 
-def gadget_inverse(vec, q, base=2):
-    """Decomposes a vector into its binary representation (G-inverse)"""
-    vec = np.asarray(vec, dtype=int).reshape(-1)
-    k = int(np.ceil(np.log2(q)))
-    digits = []
-    for x in vec:
-        coeffs = []
-        y = int(x)
-        for _ in range(k):
-            coeffs.append(y % base)
-            y //= base
-        digits.extend(coeffs)
-    return np.array(digits, dtype=int)
+def calculateSMatrix(k, l, q):
+    q_bits = [(q >> i) & 1 for i in range(k)]
+    Sk = np.zeros((k,k), dtype=int)
+    for i in range(k):
+        if i > 0: Sk[i, i-1] = -1
+        if i < k - 1: Sk[i,i] = 2
+        Sk[i, -1] = q_bits[i]
+    I = np.eye(l, dtype=int)
+    S = np.kron(I, Sk)
+    return S
 
-def sample_error(rows, cols, sigma, q):
-    """Samples discrete Gaussian noise"""
-    return np.round(np.random.normal(0, sigma, size=(rows, cols))).astype(int) % q
+def gen_parameters(q=None):
+    if q is None: q = 8192 * 64
+    k = math.ceil(math.log2(q))
+    n = 4*lam
+    m_bar = n*k+2*lam
+    p = 128  # Support for ASCII
+    alpha = 1/(2*q)
+    std_dev = 1
+    return p,q,n,m_bar,alpha,std_dev
 
-# ----------------- Core AME Logic -----------------
-
-def generate_parameters(lam=2):
-    """Sets up the lattice dimensions and moduli"""
-    q = 2**15
-    p = 128  # Plaintext modulus
-    n = lam * 2
-    k = int(np.ceil(np.log2(q)))
-    m = 10 * n
-    # Trapdoor size
-    n0 = random.randint(4, 8) 
-    sigma = 1.0
-    return {"q": q, "p": p, "m": m, "n": n, "n0": n0, "k": k, "sigma": sigma}
-
-def anamorphic_keygen(par):
-    """
-    Generates:
-    1. ask: Standard Secret Key (for fake msg)
-    2. apk: Anamorphic Public Key
-    3. dk/tk: Double Key/Trapdoor (for real msg)
-    """
-    q, m, n, n0 = par['q'], par['m'], par['n'], par['n0']
-
-    # 1. Create secret key s (with some zeros to plant the trapdoor)
-    s = np.zeros((m, 1), dtype=int)
-    indices = list(range(m))
-    random.shuffle(indices)
+def agen(q):
+    par = gen_parameters(q)
+    p, q, n, m_bar, alpha, std_dev = par
+    k = math.ceil(math.log2(q))
     
-    # Fill secret key with {-1, 0, 1}
-    for i in range(m):
-        s[i, 0] = random.choice([-1, 0, 1])
-
-    # 2. Identify indices where s is 0 to 'plant' the trapdoor
-    J = [i for i in range(m) if s[i, 0] == 0]
-    if len(J) < n0: return anamorphic_keygen(par) # Retry if not enough zeros
-    dk = random.sample(J, n0)
-
-    # 3. Construct the public matrix A with a hidden relationship in dk columns
-    A = np.random.randint(0, q, size=(n, m))
+    R = np.random.randint(-1, 2, size=(m_bar, n*k))
+    A_bar = sample_uniform_matrix(n, m_bar, q)
+    G = gadget_matrix(n, k, q)
     
-    # Internal trapdoor components (Section 5.2 of the paper)
-    A0 = np.random.randint(0, q, size=(n, n0-1))
-    t_prime = sample_error(n0-1, 1, 1.0, q)
-    eI = sample_error(n, 1, 1.0, q)
+    right = (np.matmul(A_bar, R) + G) % q
+    A = np.hstack((A_bar, right)).astype(int)
     
-    # A_hat construction
-    A_hat_last_col = (np.matmul(A0, t_prime) + eI) % q
+    E = sample_error_matrix(m_bar + n*k, n, std_dev, q)
+    U = (np.matmul(A, E)) % q
     
-    # Assign A_hat to the A matrix at dk indices
-    for idx, col in enumerate(dk[:-1]):
-        A[:, col] = A0[:, idx]
-    A[:, dk[-1]] = A_hat_last_col.flatten()
-
-    # 4. Finalize Public Key B = [A^T | As]
-    As = np.matmul(s.T, A.T) % q
-    B = np.vstack([A.T, As])
-
-    # Trapdoor vector tk
-    tk = np.zeros((m, 1), dtype=int)
-    for i, idx in enumerate(dk[:-1]):
-        tk[idx, 0] = -t_prime[i, 0]
-    tk[dk[-1], 0] = 1
-
-    return s, (par, B), dk, tk
-
-
-
-def anamorphic_encrypt(apk, dk, msg_fake, msg_real):
-    """
-    Embeds two messages into one ciphertext.
-    msg_fake: what the dictator sees.
-    msg_real: what the secret contact sees.
-    """
-    par, B = apk
-    q, m, n, k, sigma = par['q'], par['m'], par['n'], par['k'], par['sigma']
+    apk = par, A, U
+    ask = E
+    dk = None
+    tk = R
     
-    M = k * (m + 1)
-    S = sample_error(n, M, 0.5, q) # Small masking matrix
-    E = sample_error(m + 1, M, sigma, q)
+    return ask, apk, dk, tk
 
-    # Diagonal matrix J to hold different messages at trapdoor indices
-    J = np.zeros((m + 1, m + 1), dtype=int)
-    for i in range(m + 1):
-        if i in dk:
-            J[i, i] = msg_real
-        else:
-            J[i, i] = msg_fake
+def aenc(apk, mu_fake, mu_real):
+    par, A, U = apk
+    p, q, n, m_bar, alpha, std_dev = par
+    k = math.ceil(math.log2(q))
+    m = m_bar + n * k
+    delta = int(np.round(q / p))
+    
+    mu_fake_delta = (delta * mu_fake) % q
+    mu_real_delta = (delta * mu_real) % q
+    
+    s = sample_error_matrix(n, 1, alpha * q, q)
+    s_hat = (s + mu_real_delta) % q
 
-    # Kronecker product for G-matrix embedding
-    g = 2 ** np.arange(k)
-    Jg = np.kron(J, g) % q
-    
-    # Ciphertext C = B*S + Jg + E
-    C = (np.matmul(B, S) + Jg + E) % q
-    return C
+    e0 = sample_error_matrix(m, 1, std_dev, q)
+    e1 = sample_error_matrix(n, 1, std_dev, q)
 
-def normal_decrypt(par, ask, C):
-    """Decrypts using the standard secret key (reveals fake msg)"""
-    q, p, m = par['q'], par['p'], par['m']
-    delta = q // p
-    
-    # Decryption vector [ -s^T | 1 ]
-    sk_neg = np.concatenate([-ask.T, [[1]]], axis=1)
-    
-    # Extract scaled message
-    em_delta = np.zeros((m+1, 1))
-    em_delta[-1] = delta
-    G_inv = gadget_inverse(em_delta, q)
-    
-    v = np.matmul(np.matmul(sk_neg, C), G_inv) % q
-    return int(np.round(v.item() / delta)) % p
+    c0 = (np.matmul(A.T, s_hat) + e0) % q
+    c1 = (np.matmul(U.T, s_hat) + e1 + mu_fake_delta) % q
 
-def secret_decrypt(par, dk, tk, C):
-    """Decrypts using the trapdoor key (reveals real msg)"""
-    q, p, m = par['q'], par['p'], par['m']
-    delta = q // p
-    
-    # Unit vector at the last trapdoor index
-    e_hat = np.zeros((m+1, 1))
-    e_hat[dk[-1]] = delta
-    G_inv = gadget_inverse(e_hat, q)
-    
-    # Decryption row [ tk^T | 0 ]
-    t_row = np.concatenate([tk.T, [[0]]], axis=1)
-    
-    v = np.matmul(np.matmul(t_row, C), G_inv) % q
-    return int(np.round(v.item() / delta)) % p
+    return c0, c1
 
-# ----------------- Execution -----------------
+def dec(sk, ct, p, q):
+    c0, c1 = ct
+    delta = int(np.round(q/p))
+    c0_s = (np.matmul(sk.T, c0)) % q
+    sub = (c1 - c0_s) % q
+    m = np.round(sub/delta).astype(int) % p
+    return m
+
+def adec(apk, tk, act):
+    c0, c1 = act
+    par, A, U = apk
+    p, q, n, m_bar, alpha, std_dev = par
+    k = math.ceil(math.log2(q))
+
+    c0_part1 = c0[:m_bar]
+    c0_part2 = c0[m_bar:]
+    c0_diff = (c0_part2 - np.matmul(tk.T, c0_part1))
+
+    G = gadget_matrix(n, k, q)
+    S = calculateSMatrix(k, n, q)
+    diff_T = np.matmul(S.T, c0_diff)
+    Gs = c0_diff - diff_T
+    
+    s = Gs[::k]
+    s_final = np.round(s * (p / q)).astype(int) % p
+    return s_final
+
+# ==========================================
+#              SIMPLE USER INTERFACE
+# ==========================================
+
+def pad_message(msg, target_len):
+    return msg + " " * (target_len - len(msg))
+
+def run_program():
+    # Setup keys silently
+    q = 2**22
+    ask, apk, dk, tk = agen(q)
+    par = apk[0]
+    p, q, n, m_bar, alpha, std_dev = par
+    
+    # 1. Take Inputs
+    fake_str = input("Enter FAKE message: ")
+    real_str = input("Enter REAL message: ")
+    
+    # 2. Process
+    max_len = max(len(fake_str), len(real_str))
+    fake_str = pad_message(fake_str, max_len)
+    real_str = pad_message(real_str, max_len)
+    
+    dictator_output = ""
+    receiver_output = ""
+    
+    for i in range(max_len):
+        val_fake = ord(fake_str[i])
+        val_real = ord(real_str[i])
+        
+        mu_fake = np.full((n, 1), val_fake, dtype=int)
+        mu_real = np.full((n, 1), val_real, dtype=int)
+        
+        ciphertext = aenc(apk, mu_fake, mu_real)
+        
+        # Dictator Decryption
+        dec_vec_fake = dec(ask, ciphertext, p, q)
+        dictator_output += chr(dec_vec_fake[0][0])
+        
+        # Receiver Decryption
+        dec_vec_real = adec(apk, tk, ciphertext)
+        receiver_output += chr(dec_vec_real[0][0])
+
+    # 3. Show Output
+    print("\n--- DECRYPTION RESULTS ---")
+    print(f"Dictator View (Shared Key):  {dictator_output.strip()}")
+    print(f"Receiver View (Hidden Key):  {receiver_output.strip()}")
 
 if __name__ == "__main__":
-    params = generate_parameters()
-    ask, apk, dk, tk = anamorphic_keygen(params)
-
-    # 1. Define your two messages
-    REAL_MSG = 88   # The secret communication
-    FAKE_MSG = 12   # The decoy for the dictator
-
-    print(f"Original Intent -> Real: {REAL_MSG}, Fake: {FAKE_MSG}")
-
-    # 2. Encrypt into a single ciphertext
-    ciphertext = anamorphic_encrypt(apk, dk, FAKE_MSG, REAL_MSG)
-
-    # 3. Decrypt with Key 1 (Secret Key - Dictator's view)
-    revealed_fake = normal_decrypt(params, ask, ciphertext)
-    print(f"Key 1 (ask) Decryption: {revealed_fake}  <-- This is what the Dictator sees")
-
-    # 4. Decrypt with Key 2 (Trapdoor Key - Real view)
-    revealed_real = secret_decrypt(params, dk, tk, ciphertext)
-    print(f"Key 2 (tk)  Decryption: {revealed_real}  <-- This is the hidden message")
+    run_program()
