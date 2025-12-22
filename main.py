@@ -139,9 +139,13 @@ def run_program():
         
         mu_fake = np.full((n, 1), val_fake, dtype=int)
         mu_real = np.full((n, 1), val_real, dtype=int)
-        
+
+
+        #print(f"Encrypting '{fake_str[i]}': Vector is \n{mu_fake.T}")
+
+
         ciphertext = aenc(apk, mu_fake, mu_real)
-        print(ciphertext)
+        
         # Dictator Decryption
         dec_vec_fake = dec(ask, ciphertext, p, q)
         dictator_output += chr(dec_vec_fake[0][0])
