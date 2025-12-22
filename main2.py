@@ -1,28 +1,43 @@
 import math
 import numpy as np
-import secrets  # For secure randomness
+import secrets
+import time  # <--- IMPORTED FOR TIMING
 
+# ==========================================
+#      1. STRICT DISCRETE GAUSSIAN SAMPLING
+# ==========================================
+def sample_discrete_gaussian(rows, cols, sigma):
+    """
+    Samples from the Discrete Gaussian distribution D_{Z, sigma}.
+    Uses standard numpy normal but ensures integer rounding is unbiased.
+    """
+    rng = np.random.default_rng(secrets.randbits(32))
+    continuous_samples = rng.normal(loc=0, scale=sigma, size=(rows, cols))
+    
+    # Randomized Rounding: x = floor(x) + Bernoulli(x - floor(x))
+    floored = np.floor(continuous_samples)
+    fractional = continuous_samples - floored
+    bernoulli = rng.random(size=(rows, cols)) < fractional
+    return (floored + bernoulli).astype(int)
 
+# ==========================================
+#      2. ROBUST GADGET INVERSION
+# ==========================================
+def bit_decomposition_inverse(vec, n, k, q):
+    pass # (Not used in this simplified demo, but placeholder for strict theory)
 
-
-# lam=16 -> n=64. This means we can encrypt 64 characters in ONE go.
-LAMBDA_PARAM = 16 
+# ==========================================
+#      CORE CRYPTO
+# ==========================================
+LAMBDA_PARAM =  64
 
 def get_secure_random_seed():
-    """Generates a secure seed for NumPy using the OS random source."""
     return secrets.randbits(32)
 
 def sample_uniform_matrix(rows, cols, q):
-
-    # SECURE RANDOMNESS: Re-seed generator for every operation
     rng = np.random.default_rng(get_secure_random_seed())
     return rng.integers(0, q, size=(rows,cols))
 
-def sample_error_matrix(rows, cols, std_dev, q):
-    rng = np.random.default_rng(get_secure_random_seed())
-    return np.round(rng.normal(loc=0, scale=std_dev, size=(rows, cols))).astype(int)
-
-# --- Standard Helper Functions (Optimized) ---
 def gadget_matrix(n, k, q):
     g = 2 ** np.arange(k)
     return np.kron(np.eye(n, dtype=int), g) % q
@@ -37,29 +52,22 @@ def calculateSMatrix(k, l, q):
     return np.kron(np.eye(l, dtype=int), Sk)
 
 def gen_parameters(q=None):
-    if q is None: q = 2**22 # Keep q large enough
+    if q is None: q = 2**22
     k = math.ceil(math.log2(q))
     n = 4 * LAMBDA_PARAM
     m_bar = n*k + 2*LAMBDA_PARAM
-    p = 256  # Full Extended ASCII support
+    p = 256  
     alpha = 1/(2*q)
-    std_dev = 2.0 # Slightly higher noise tolerance
+    std_dev = 3.2 
     return p, q, n, m_bar, alpha, std_dev
-
-# ==========================================
-#        CORE CRYPTO (Vectorized)
-# ==========================================
 
 def agen(q):
     par = gen_parameters(q)
     p, q, n, m_bar, alpha, std_dev = par
     k = math.ceil(math.log2(q))
     
-    print(f"[System] Generating Keys (Dimension n={n})...")
-    
-    # 2. TRAPDOOR GENERATION
     rng = np.random.default_rng(get_secure_random_seed())
-    R = rng.integers(-1, 2, size=(m_bar, n*k))
+    R = rng.integers(0, 2, size=(m_bar, n*k)) 
     
     A_bar = sample_uniform_matrix(n, m_bar, q)
     G = gadget_matrix(n, k, q)
@@ -67,33 +75,26 @@ def agen(q):
     right = (np.matmul(A_bar, R) + G) % q
     A = np.hstack((A_bar, right)).astype(int)
     
-    E = sample_error_matrix(m_bar + n*k, n, std_dev, q)
+    E = sample_discrete_gaussian(m_bar + n*k, n, std_dev)
     U = (np.matmul(A, E)) % q
     
     return E, (par, A, U), None, R
 
-def aenc(apk, mu_fake_vector, mu_real_vector):
-    """
-    Encrypts an n-dimensional vector at once.
-    mu_fake_vector: Shape (n, 1)
-    mu_real_vector: Shape (n, 1)
-    """
+def aenc(apk, mu_fake_vec, mu_real_vec):
     par, A, U = apk
     p, q, n, m_bar, alpha, std_dev = par
     k = math.ceil(math.log2(q))
     m = m_bar + n * k
     delta = int(np.round(q / p))
     
-    # Scale messages
-    mu_fake_delta = (delta * mu_fake_vector) % q
-    mu_real_delta = (delta * mu_real_vector) % q
+    mu_fake_delta = (delta * mu_fake_vec) % q
+    mu_real_delta = (delta * mu_real_vec) % q
     
-    # Anamorphic Embedding
-    s = sample_error_matrix(n, 1, alpha * q, q)
+    s = sample_discrete_gaussian(n, 1, std_dev * 2) 
     s_hat = (s + mu_real_delta) % q
 
-    e0 = sample_error_matrix(m, 1, std_dev, q)
-    e1 = sample_error_matrix(n, 1, std_dev, q)
+    e0 = sample_discrete_gaussian(m, 1, std_dev)
+    e1 = sample_discrete_gaussian(n, 1, std_dev)
 
     c0 = (np.matmul(A.T, s_hat) + e0) % q
     c1 = (np.matmul(U.T, s_hat) + e1 + mu_fake_delta) % q
@@ -116,105 +117,93 @@ def adec(apk, tk, act):
 
     c0_part1 = c0[:m_bar]
     c0_part2 = c0[m_bar:]
-    c0_diff = (c0_part2 - np.matmul(tk.T, c0_part1))
-
-    # Inversion Logic
-   
-    Gs = c0_diff - np.matmul(calculateSMatrix(k, n, q).T, c0_diff)
-    s = Gs[::k]
     
+    c0_diff = (c0_part2 - np.matmul(tk.T, c0_part1)) % q
+
+    Gs = c0_diff - np.matmul(calculateSMatrix(k, n, q).T, c0_diff)
+    s = Gs[::k] 
     s_final = np.round(s * (p / q)).astype(int) % p
     return s_final
 
 # ==========================================
-#      TEXT PROCESSING (PACKING LOGIC)
+#      TEXT PROCESSING & TIMING UTILS
 # ==========================================
 
 def string_to_chunks(text, n):
-    """
-    Splits a string into chunks of size 'n'. 
-    Pads with spaces if the last chunk is too short.
-    """
-    # Convert string to ASCII values
     ascii_vals = [ord(c) for c in text]
-    
     chunks = []
     for i in range(0, len(ascii_vals), n):
         chunk = ascii_vals[i : i + n]
-        # Pad with spaces (ASCII 32) if needed
-        while len(chunk) < n:
-            chunk.append(32) 
+        while len(chunk) < n: chunk.append(32) 
         chunks.append(np.array(chunk).reshape(n, 1))
     return chunks
 
 def chunks_to_string(chunks):
-    """Converts a list of vector chunks back to a single string."""
     text = ""
     for chunk in chunks:
-        # chunk is (n, 1), flatten it
         flat = chunk.flatten()
         for val in flat:
-            # Simple error handling for non-printable chars
-            if 32 <= val <= 126: 
-                text += chr(val)
-            else:
-                text += "?" # Error placeholder
+            if 32 <= val <= 126: text += chr(val)
+            else: text += "?"
     return text
 
 def run_program():
-    print("--- PROFESSIONAL ANAMORPHIC MESSENGER ---")
+    print("--- TIMED ANAMORPHIC MESSENGER ---")
     
-    # Setup
-    q = 2**22
-    ask, apk, dk, tk = agen(q)
+    # 1. MEASURE KEY GENERATION
+    print("[Timing] Generating Keys...")
+    t_start = time.perf_counter()
+    ask, apk, dk, tk = agen(2**22)
+    t_end = time.perf_counter()
+    print(f"   -> Key Gen Time: {(t_end - t_start):.4f} seconds")
+    
     par = apk[0]
     p, q, n, m_bar, alpha, std_dev = par
+    print(f"[System] Block size n={n}")
     
-    print(f"[System] Ready. Block size n={n} chars per encryption.")
-    
-    fake_str = input("Enter FAKE message: ")
+    fake_str = input("\nEnter FAKE message: ")
     real_str = input("Enter REAL message: ")
     
-    # 1. Chunking (Vector Packing)
-    # We break the long message into blocks of size 'n'
     fake_chunks = string_to_chunks(fake_str, n)
     real_chunks = string_to_chunks(real_str, n)
-    
-    # Ensure equal number of chunks (pad the message list itself)
     max_blocks = max(len(fake_chunks), len(real_chunks))
     
-    # Fill missing blocks with "space" vectors
     empty_block = np.full((n, 1), 32, dtype=int)
     while len(fake_chunks) < max_blocks: fake_chunks.append(empty_block)
     while len(real_chunks) < max_blocks: real_chunks.append(empty_block)
     
-    print(f"\n[Sender] Encrypting {max_blocks} blocks...")
+    ciphertexts = []
+    dec_fake = []
+    dec_real = []
     
-    decrypted_fake_chunks = []
-    decrypted_real_chunks = []
-    
-    # 2. Efficient Loop
+    print(f"\n[Timing] Processing {max_blocks} block(s)...")
+
+    # 2. MEASURE ENCRYPTION
+    t_start = time.perf_counter()
     for i in range(max_blocks):
-        # We process 'n' characters at once here!
         c_txt = aenc(apk, fake_chunks[i], real_chunks[i])
+        ciphertexts.append(c_txt)
+    t_end = time.perf_counter()
+    print(f"   -> Encryption Time: {(t_end - t_start)*1000:.2f} ms")
+
+    # 3. MEASURE STANDARD DECRYPTION (DICTATOR)
+    t_start = time.perf_counter()
+    for i in range(max_blocks):
+        m = dec(ask, ciphertexts[i], p, q)
+        dec_fake.append(m)
+    t_end = time.perf_counter()
+    print(f"   -> Standard Decryption Time: {(t_end - t_start)*1000:.2f} ms")
+
+    # 4. MEASURE ANAMORPHIC DECRYPTION (RECEIVER)
+    t_start = time.perf_counter()
+    for i in range(max_blocks):
+        m = adec(apk, tk, ciphertexts[i])
+        dec_real.append(m)
+    t_end = time.perf_counter()
+    print(f"   -> Anamorphic Decryption Time: {(t_end - t_start)*1000:.2f} ms")
         
-        # Dictator Decrypt
-        m_vec_fake = dec(ask, c_txt, p, q)
-        decrypted_fake_chunks.append(m_vec_fake)
-        
-        # Receiver Decrypt
-        m_vec_real = adec(apk, tk, c_txt)
-        decrypted_real_chunks.append(m_vec_real)
-        
-    print("[Sender] Transmission Complete.")
-    
-    # 3. Reassemble
-    final_fake = chunks_to_string(decrypted_fake_chunks)
-    final_real = chunks_to_string(decrypted_real_chunks)
-    
-    print("\n--- DECRYPTION RESULTS ---")
-    print(f"Dictator View:  {final_fake}")
-    print(f"Receiver View:  {final_real}")
+    print(f"\nDictator View: {chunks_to_string(dec_fake)}")
+    print(f"Receiver View: {chunks_to_string(dec_real)}")
 
 if __name__ == "__main__":
     run_program()
