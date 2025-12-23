@@ -148,7 +148,7 @@ def adec(apk, dk, tk, ask, act):
     c0_part2 = c0[m_bar:]
 
     # Calculate c0_part2 - R^T*c0_part1
-    c0_diff = (c0_part2 - np.matmul(tk.T, c0_part1))
+    c0_diff = (c0_part2 - np.matmul(tk.T, c0_part1)) % q
 
     # Calculate gadget matrix G
     G = gadget_matrix(n, k, q)
@@ -173,7 +173,7 @@ def adec(apk, dk, tk, ask, act):
     e = (c0 - np.matmul(A.T, s)%q)
     s_final = np.round(s * (p / q)).astype(int) % p
 
-    return s_final, e
+    return s_final#, e
 
 
 # q = 2**22
