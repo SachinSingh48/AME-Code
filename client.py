@@ -1,5 +1,4 @@
 import asyncio
-import json
 import websockets
 from src.receiver_am import ReceiverAnamorphicEncryption
 from src.sender_am import SenderAnamorphicEncryption
@@ -11,7 +10,7 @@ LAMBDA_BITS = 256
 async def send_messages(websocket):
     loop = asyncio.get_event_loop()
     while True:
-        msg = await loop.run_in_executor(None, input)
+        msg = await loop.run_in_executor(None, input, "Enter: ")
         print("You:", msg)
         await websocket.send(msg)
 
@@ -32,7 +31,7 @@ async def main():
         name, aPK, aSK, dkey = generate_key()
         pub_keys = [name, aPK, dkey]
         print("[System]: Anamorphic keys generated and published.")
-        await websocket.send(json.dumps(pub_keys))
+        #await websocket.send(json.dumps(pub_keys))
 
         await asyncio.gather(
             send_messages(websocket),

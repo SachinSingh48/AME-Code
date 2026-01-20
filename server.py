@@ -2,7 +2,7 @@ import asyncio
 import websockets
 
 # create empty storage for clients {"ws": websocket, "pubkey": list}
-clients = {}
+clients = set()
 
 # define a function to handle incoming messages from clients
 async def handle_message(websocket):
