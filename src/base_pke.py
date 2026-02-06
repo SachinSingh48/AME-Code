@@ -24,13 +24,30 @@ class ElGamalPKE:
         
         return PK, SK
 
+    def text_to_int(self, text, p):
+        # Convert string to bytes, then to int
+        m_int = int.from_bytes(text.encode('utf-8'), 'big')
+        if m_int >= p:
+            raise ValueError("Message too long for the key size!")
+        return m_int
+    
+    def int_to_text(self, number):
+        # Convert int back to bytes, then to string
+        # We need to calculate the number of bytes needed
+        try:
+            num_bytes = (number.bit_length() + 7) // 8
+            return number.to_bytes(num_bytes, 'big').decode('utf-8')
+        except:
+            return "[Decryption Error: Not text]"
+
     def Encrypt(self, PK, message, randomness=None):
         p = PK['p']
         g = PK['g']
         h = PK['h']
 
-        if not isinstance(message, int):
-            message_int = int.from_bytes(sha255_hash(message), 'big') % p
+        # FIX: Check if it IS a string to convert it
+        if isinstance(message, str):
+            message_int = self.text_to_int(message, p)
         else:
             message_int = message % p
 

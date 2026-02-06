@@ -1,7 +1,7 @@
 import math
 import numpy as np
 
-lam = 16
+lam = 32
 
 
 def sample_uniform_matrix(rows, cols, q):
@@ -228,4 +228,3 @@ def adec(apk, dk, tk, ask, act):
 #     print("Regular decryption works on anamorphic ciphertext!")
 # else:
 #     print("Regular decryption fails on anamorphic ciphertext!")
-
