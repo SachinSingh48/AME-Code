@@ -29,7 +29,7 @@ def bit_decomposition_inverse(vec, n, k, q):
 # ==========================================
 #      CORE CRYPTO
 # ==========================================
-LAMBDA_PARAM =  64
+LAMBDA_PARAM =  8
 
 def get_secure_random_seed():
     return secrets.randbits(32)
