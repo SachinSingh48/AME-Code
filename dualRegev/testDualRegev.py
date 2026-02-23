@@ -1,7 +1,7 @@
 import numpy as np
 import time
 from termcolor import colored
-from dualRegev import *
+from dualRegev.dualRegev import *
 
 def string_to_chunks(text, n):
     ascii_vals = [ord(c) for c in text]
