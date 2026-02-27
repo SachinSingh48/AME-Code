@@ -132,18 +132,22 @@ class E2EClient:
 
     def print_chat_message(self, msg):
         """Decodes and prints a message to the UI."""
-        ciphertexts = json_restore(msg.get("body"))
+        try:
+            ciphertexts = json_restore(msg.get("body"))
 
-        decrypted_m0 = rae.NormalDecrypt(self.aSK, ciphertexts)
-        public_msg = rae.pke.int_to_text(decrypted_m0)
-        decrypted_m1 = rae.DoubleDecrypt(self.dkey, ciphertexts)
-        secret_msg = rae.pke.int_to_text(decrypted_m1)
+            decrypted_m0 = rae.NormalDecrypt(self.aSK, ciphertexts)
+            public_msg = decrypted_m0 if isinstance(decrypted_m0, str) else str(decrypted_m0)
+            
+            decrypted_m1 = rae.DoubleDecrypt(self.dkey, ciphertexts)
+            secret_msg = decrypted_m1 if isinstance(decrypted_m1, str) else str(decrypted_m1)
 
-        sender = msg['from']
+            sender = msg['from']
 
-        print(f"\n\r💬 {sender} (Public): {public_msg}")
-        if public_msg != secret_msg:
-            print(f"\r🤫 {sender} (Secret): {secret_msg}")
+            print(f"\n\r💬 {sender} (Public): {public_msg}")
+            if public_msg != secret_msg:
+                print(f"\r🤫 {sender} (Secret): {secret_msg}")
+        except Exception as e:
+            print(f"\n[ERROR] Failed to decrypt message: {str(e)}")
 
     def set_active_peer(self, peer_id):
         """Sets the target peer and flushes relevant backlog messages."""
@@ -163,7 +167,7 @@ class E2EClient:
             self.msg_backlog = [m for m in self.msg_backlog if m['from'] != peer_id]
 
     async def request_pubkey(self, target_id):
-        """Ask server for someone’s pubkey."""
+        """Ask server for someone's pubkey."""
         self.pubkey_ready.clear()
         req = {
             "type": "get_pubkey",
@@ -180,20 +184,22 @@ class E2EClient:
             print(f"\n[ERROR] Cannot send. Public key missing.")
             return
 
-        ciphertexts = rae.AnamorphicEncrypt(json_restore(self.peer_pubkey), m0, m1)
+        try:
+            ciphertexts = rae.AnamorphicEncrypt(json_restore(self.peer_pubkey), m0, m1)
 
-        msg = {
-            "type": "ciphertext",
-            "to": target_id,
-            "from": self.id,
-            "body": json_safe(ciphertexts)
-        }
-        
-        if self.ws:
-            try:
+            msg = {
+                "type": "ciphertext",
+                "to": target_id,
+                "from": self.id,
+                "body": json_safe(ciphertexts)
+            }
+            
+            if self.ws:
                 await self.ws.send(json.dumps(msg))
-            except websockets.ConnectionClosed:
-                print("[ERROR] Connection to server lost.")
+                print("[System] Message sent! ✓")
+        except Exception as e:
+            print(f"[ERROR] Encryption failed: {str(e)}")
+            print("[TIP] Try sending shorter messages, or ensure both users have compatible keys.")
 
     async def send_peer_left(self, target_id):
         msg = {"type": "peer_left", "to": target_id, "from": self.id}
@@ -213,8 +219,10 @@ class E2EClient:
 
 async def main():    
     print("========================================")
-    print("      ANAMORPHIC CHAT        ")
+    print("      ANAMORPHIC CHAT (Enhanced)      ")
     print("========================================")
+    print("[Info] This version supports long messages via hybrid encryption")
+    print()
     
     my_name = input("Enter your username: ")
     
@@ -257,10 +265,11 @@ async def main():
 
         print(f"\n[System] Ready to chat with {receiver}!")
         print("Type your messages below. Type '/back' to switch users, or '/quit' to exit.")
+       # print("💡 Tip: You can now send long messages!\n")
         
         # --- INNER LOOP: CHAT SESSION ---
         while True:
-            m0 = await asyncio.to_thread(input, f"\n[To: {receiver}] Fake Message: ")
+            m0 = await asyncio.to_thread(input, f"[To: {receiver}] Public Message: ")
             
             if m0.strip() == "/quit":
                 print("\n[System] Exiting application...")
@@ -272,8 +281,12 @@ async def main():
                 print(f"\n[System] Returning to main menu...")
                 await your_client.send_peer_left(receiver)
                 break
+            
+            if m0.strip() == "":
+                print("[System] Message cannot be empty. Please try again.")
+                continue
                 
-            m1 = await asyncio.to_thread(input, f"[To: {receiver}] Real/Secret Message: ")
+            m1 = await asyncio.to_thread(input, f"[To: {receiver}] Secret Message: ")
             
             if m1.strip() == "/quit":
                 print("\n[System] Exiting application...")
@@ -285,6 +298,10 @@ async def main():
                 print(f"\n[System] Returning to main menu...")
                 await your_client.send_peer_left(receiver)
                 break
+
+            if m1.strip() == "":
+                print("[System] Message cannot be empty. Please try again.")
+                continue
 
             if not your_client.peer_pubkey:
                 print(f"[ERROR] Cannot send. '{receiver}' is no longer in the chat.")
