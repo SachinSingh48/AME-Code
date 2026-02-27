@@ -17,6 +17,10 @@ class ReceiverAnamorphicEncryption:
         return aPK, aSK, dkey
 
     def AnamorphicEncrypt(self, dkey, m0, m1):
+        """
+        Encrypt two messages (m0 and m1) under two different keys.
+        Supports both short and long messages via hybrid encryption.
+        """
         pk0 = dkey['pk0']
         pk1 = dkey['pk1']
         aux = dkey['aux']
@@ -34,15 +38,21 @@ class ReceiverAnamorphicEncryption:
         return anamorphic_ciphertext
 
     def NormalDecrypt(self, aSK, anamorphic_ciphertext):
+        """Decrypt the 'public' message (m0) using the anamorphic secret key."""
         ct0 = anamorphic_ciphertext['ct0']
         pi = anamorphic_ciphertext['pi']
-        decrypted_m0 = self.pke.Decrypt(aSK, ct0)
+        
+        # Use the universal decrypt function
+        decrypted_m0 = self.pke.decrypt_and_decode(aSK, ct0)
         return decrypted_m0
 
     def DoubleDecrypt(self, dkey, anamorphic_ciphertext):
+        """Decrypt the 'secret' message (m1) using the double-key (sk1)."""
         sk1 = dkey['sk1']
         ct1 = anamorphic_ciphertext['ct1']
-        decrypted_m1 = self.pke.Decrypt(sk1, ct1)
+        
+        # Use the universal decrypt function
+        decrypted_m1 = self.pke.decrypt_and_decode(sk1, ct1)
         return decrypted_m1
 
     def NormalKeyGen(self, lambda_bits):
@@ -55,4 +65,4 @@ class ReceiverAnamorphicEncryption:
         return ciphertext
 
     def NormalDecryptStandard(self, SK, ciphertext):
-        return self.pke.Decrypt(SK, ciphertext)
+        return self.pke.decrypt_and_decode(SK, ciphertext)
